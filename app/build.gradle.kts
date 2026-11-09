@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.example.lumenplayer"
-    compileSdk = 36
+    compileSdk = 37
     defaultConfig {
         applicationId = "com.example.lumenplayer"
         minSdk = 26
