@@ -12,11 +12,11 @@ A native Android music-player starter built with Jetpack Compose and Material 3.
 
 ## Open and run
 
-Open this folder in Android Studio with JDK 17 and Android SDK 37 installed. Let Gradle sync, then run the `app` configuration on an Android device or emulator. The first folder selection is handled by Android's system picker; select a music folder on internal storage or the SD card.
+Open this folder in Android Studio with JDK 17 and Android SDK 36 installed. Let Gradle sync, then run the `app` configuration on an Android device or emulator. The first folder selection is handled by Android's system picker; select a music folder on internal storage or the SD card.
 
 ## Build an APK with GitHub Actions
 
-The workflow at `.github/workflows/android-apk.yml` runs on pushes and pull requests, and can also be started manually from the repository's **Actions** tab with **Build Android APK → Run workflow**. It uses JDK 17, Gradle 9.3.1, and Android SDK 37, builds `assembleDebug`, and uploads an artifact named `lumen-debug-apk`.
+The workflow at `.github/workflows/android-apk.yml` runs on pushes and pull requests, and can also be started manually from the repository's **Actions** tab with **Build Android APK → Run workflow**. It uses JDK 17, Gradle 8.13, and Android SDK 36, builds `assembleDebug`, and uploads an artifact named `lumen-debug-apk`.
 
 To download it, open the completed workflow run on GitHub and select `lumen-debug-apk` in the **Artifacts** section. The artifact contains the installable debug APK and is kept for 14 days. This workflow builds an unsigned debug APK; release signing is not configured.
 
