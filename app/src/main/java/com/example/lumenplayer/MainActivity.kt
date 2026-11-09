@@ -57,20 +57,32 @@ class MainActivity : ComponentActivity() {
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
         window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE or android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-        setContent { LumenApp() }
+        setContent { LumenApp(sharedUris = sharedAudioUris(intent)) }
     }
+}
+
+@Suppress("DEPRECATION")
+private fun sharedAudioUris(intent: android.content.Intent?): List<Uri> {
+    if (intent == null) return emptyList()
+    val uris = when (intent.action) {
+        android.content.Intent.ACTION_SEND -> listOfNotNull(intent.getParcelableExtra<Uri>(android.content.Intent.EXTRA_STREAM), intent.data)
+        android.content.Intent.ACTION_SEND_MULTIPLE -> intent.getParcelableArrayListExtra<Uri>(android.content.Intent.EXTRA_STREAM).orEmpty()
+        android.content.Intent.ACTION_VIEW -> listOfNotNull(intent.data)
+        else -> emptyList()
+    }
+    return uris.distinct()
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun LumenApp() {
+private fun LumenApp(sharedUris: List<Uri> = emptyList()) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("lumen", 0) }
     val player = remember { ExoPlayer.Builder(context).build() }
     var tracks by remember { mutableStateOf(emptyList<Track>()) }
     var current by remember { mutableIntStateOf(0) }
     var playing by remember { mutableStateOf(false) }
-    var page by remember { mutableStateOf(Page.Home) }
+    var page by remember { mutableStateOf(Page.Library) }
     var dark by remember { mutableStateOf(prefs.getBoolean("dark", true)) }
     var accentMode by remember { mutableIntStateOf(prefs.getInt("accent", 0)) }
     var favorite by remember { mutableStateOf(false) }
@@ -94,6 +106,15 @@ private fun LumenApp() {
     LaunchedEffect(playing) {
         while (playing) { if (player.duration > 0) progress = player.currentPosition.toFloat() / player.duration; kotlinx.coroutines.delay(400) }
     }
+    LaunchedEffect(sharedUris) {
+        if (sharedUris.isNotEmpty()) {
+            sharedUris.forEach { uri -> runCatching { context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
+            message = "Adding shared audio…"
+            val imported = withContext(Dispatchers.IO) { scanUris(context, sharedUris) }
+            tracks = (tracks + imported).distinctBy { it.uri }.sortedBy { it.title.lowercase(Locale.ROOT) }
+            message = if (imported.isEmpty()) "Couldn't read the shared audio file" else "Added ${imported.size} shared songs"
+        }
+    }
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) {
             runCatching { context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
@@ -102,6 +123,17 @@ private fun LumenApp() {
                 val found = withContext(Dispatchers.IO) { scanFolder(context, uri) }
                 tracks = found
                 message = if (found.isEmpty()) "No supported audio found in that folder" else "Added ${found.size} songs"
+            }
+        }
+    }
+    val audioPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) {
+            uris.forEach { uri -> runCatching { context.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
+            message = "Importing audio…"
+            scope.launch {
+                val imported = withContext(Dispatchers.IO) { scanUris(context, uris) }
+                tracks = (tracks + imported).distinctBy { it.uri }.sortedBy { it.title.lowercase(Locale.ROOT) }
+                message = if (imported.isEmpty()) "No supported audio found in those files" else "Added ${imported.size} songs"
             }
         }
     }
@@ -118,7 +150,7 @@ private fun LumenApp() {
             AnimatedContent(page, modifier = Modifier.fillMaxSize().padding(padding), label = "page") { active ->
                 when (active) {
                     Page.Home -> PlayerScreen(tracks.getOrNull(current), playing, progress, favorite, tracks.size, accent, onPlay = { togglePlayback(player, tracks, current) }, onPrev = { if (tracks.isNotEmpty()) { current = (current - 1 + tracks.size) % tracks.size; playIndex(player, tracks, current) } }, onNext = { if (tracks.isNotEmpty()) { current = (current + 1) % tracks.size; playIndex(player, tracks, current) } }, onFavorite = { favorite = !favorite }, onSeek = { progress = it; if (player.duration > 0) player.seekTo((player.duration * it).toLong()) }, onLibrary = { page = Page.Library }, onEqualizer = { page = Page.Equalizer }, onFolder = { folderPicker.launch(null) }, onQueue = { expanded = true })
-                    Page.Library -> LibraryScreen(tracks, current, message, accent, onChooseFolder = { folderPicker.launch(null) }, onSelect = { current = it; playIndex(player, tracks, it); page = Page.Home }, onBack = { page = Page.Home })
+                    Page.Library -> LibraryScreen(tracks, current, message, accent, onChooseFolder = { folderPicker.launch(null) }, onImportFiles = { audioPicker.launch(arrayOf("audio/*")) }, onSelect = { current = it; playIndex(player, tracks, it); page = Page.Home }, onBack = { page = Page.Home })
                     Page.Equalizer -> EqualizerScreen(player.audioSessionId, accent, onBack = { page = Page.Home })
                     Page.Settings -> SettingsScreen(dark, accentMode, accent, onDark = { dark = it; prefs.edit().putBoolean("dark", it).apply() }, onAccent = { accentMode = it; prefs.edit().putInt("accent", it).apply() }, onFolder = { folderPicker.launch(null) })
                 }
@@ -185,10 +217,10 @@ private fun ArtCard(track: Track?, modifier: Modifier = Modifier, accent: Color)
 }
 
 @Composable
-private fun LibraryScreen(tracks: List<Track>, current: Int, message: String, accent: Color, onChooseFolder: () -> Unit, onSelect: (Int) -> Unit, onBack: () -> Unit) {
+private fun LibraryScreen(tracks: List<Track>, current: Int, message: String, accent: Color, onChooseFolder: () -> Unit, onImportFiles: () -> Unit, onSelect: (Int) -> Unit, onBack: () -> Unit) {
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null) }; Column(Modifier.weight(1f)) { Text("Your library", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text("${tracks.size} songs", color = MaterialTheme.colorScheme.onSurfaceVariant) }; IconButton(onClick = onChooseFolder) { Icon(Icons.Rounded.CreateNewFolder, "Scan folder") } }
-        if (tracks.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Rounded.LibraryMusic, null, Modifier.size(54.dp), tint = accent); Spacer(Modifier.height(14.dp)); Text(if (message.isNotBlank()) message else "Your music, beautifully together", style = MaterialTheme.typography.titleMedium); Spacer(Modifier.height(14.dp)); Button(onClick = onChooseFolder) { Icon(Icons.Rounded.FolderOpen, null); Spacer(Modifier.width(8.dp)); Text("Choose a folder") } } }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, null) }; Column(Modifier.weight(1f)) { Text("Your library", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text("${tracks.size} songs", color = MaterialTheme.colorScheme.onSurfaceVariant) }; IconButton(onClick = onImportFiles) { Icon(Icons.Rounded.LibraryAdd, "Import audio files") }; IconButton(onClick = onChooseFolder) { Icon(Icons.Rounded.CreateNewFolder, "Scan folder") } }
+        if (tracks.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Rounded.LibraryMusic, null, Modifier.size(54.dp), tint = accent); Spacer(Modifier.height(14.dp)); Text(if (message.isNotBlank()) message else "Your music, beautifully together", style = MaterialTheme.typography.titleMedium); Spacer(Modifier.height(14.dp)); Text("Scan a music folder or import audio files. Android restricts access to Android/data.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant); Spacer(Modifier.height(14.dp)); Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) { Button(onClick = onChooseFolder) { Icon(Icons.Rounded.FolderOpen, null); Spacer(Modifier.width(8.dp)); Text("Choose folder") }; OutlinedButton(onClick = onImportFiles) { Icon(Icons.Rounded.LibraryAdd, null); Spacer(Modifier.width(8.dp)); Text("Import files") } } } }
         else LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) { itemsIndexed(tracks) { index, track -> TrackRow(track, index == current, accent) { onSelect(index) } } }
     }
 }
@@ -280,21 +312,28 @@ private suspend fun scanFolder(context: android.content.Context, root: Uri): Lis
     val files = mutableListOf<DocumentFile>()
     fun walk(folder: DocumentFile, depth: Int) { if (depth > 12) return; folder.listFiles().forEach { file -> if (file.isDirectory) walk(file, depth + 1) else if (file.type?.startsWith("audio/") == true || file.name?.substringAfterLast('.', "")?.lowercase(Locale.ROOT) in setOf("mp3", "m4a", "aac", "flac", "ogg", "opus", "wav", "wma")) files.add(file) } }
     runCatching { walk(DocumentFile.fromTreeUri(context, root) ?: return@withContext emptyList(), 0) }
-    files.map { file ->
+    scanUris(context, files.map { it.uri })
+}
+
+private suspend fun scanUris(context: android.content.Context, uris: List<Uri>): List<Track> = withContext(Dispatchers.IO) {
+    uris.mapNotNull { uri ->
+        val mime = runCatching { context.contentResolver.getType(uri) }.getOrNull()
+        val name = runCatching { DocumentFile.fromSingleUri(context, uri)?.name }.getOrNull()
+        if (mime?.startsWith("audio/") != true && name?.substringAfterLast('.', "")?.lowercase(Locale.ROOT) !in setOf("mp3", "m4a", "aac", "flac", "ogg", "opus", "wav", "wma")) return@mapNotNull null
         val retriever = MediaMetadataRetriever()
         var art: android.graphics.Bitmap? = null
-        var title = file.name?.substringBeforeLast('.') ?: "Unknown track"; var artist = "Unknown artist"; var album = "Local music"; var duration = 0L
+        var title = name?.substringBeforeLast('.') ?: "Unknown track"; var artist = "Unknown artist"; var album = "Local music"; var duration = 0L
         runCatching {
-            retriever.setDataSource(context, file.uri)
+            retriever.setDataSource(context, uri)
             title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE) ?: title
             artist = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST) ?: artist
             album = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ALBUM) ?: album
             duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
             art = retriever.embeddedPicture?.let { bytes -> android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { android.graphics.Bitmap.createScaledBitmap(it, 500, 500, true) } }
         }
-        retriever.release()
+        runCatching { retriever.release() }
         val color = art?.let { averageColor(it) } ?: Color(0xFFD9A7FF)
-        Track(file.uri, title, artist, album, art, color, duration)
+        Track(uri, title, artist, album, art, color, duration)
     }.sortedBy { it.title.lowercase(Locale.ROOT) }
 }
 

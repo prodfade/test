@@ -4,7 +4,7 @@ A native Android music-player starter built with Jetpack Compose and Material 3.
 
 ## Included
 
-- Choose a folder with Android's Storage Access Framework. The system picker exposes eligible internal storage and SD-card locations; the app keeps read access and scans audio files recursively.
+- Choose an accessible folder with Android's Storage Access Framework, or import individual audio files from the system picker. The app keeps read access and scans selected folders recursively.
 - Local playback and queue controls using AndroidX Media3 ExoPlayer.
 - Embedded cover art and an accent color sampled from each track's cover.
 - A five-band equalizer backed by Android's audio effects where the device supports it.
@@ -12,7 +12,9 @@ A native Android music-player starter built with Jetpack Compose and Material 3.
 
 ## Open and run
 
-Open this folder in Android Studio with JDK 17 and Android SDK 36 installed. Let Gradle sync, then run the `app` configuration on an Android device or emulator. The first folder selection is handled by Android's system picker; select a music folder on internal storage or the SD card.
+Open this folder in Android Studio with JDK 17 and Android SDK 36 installed. Let Gradle sync, then run the `app` configuration on an Android device or emulator. The app opens to the library. Choose a music folder on internal storage or an SD card, or import individual audio files.
+
+Android 11 and newer block apps and the system document picker from reading another app's `Android/data` directory. Lumen cannot bypass that system restriction. If Snaptube offers **Share/Open with**, send the downloaded audio to Lumen; otherwise, use Snaptube's save or export option to place it in a shared music folder that the picker can access.
 
 ## Build an APK with GitHub Actions
 
